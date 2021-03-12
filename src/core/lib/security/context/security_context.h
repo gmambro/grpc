@@ -20,6 +20,7 @@
 #define GRPC_CORE_LIB_SECURITY_CONTEXT_SECURITY_CONTEXT_H
 
 #include <grpc/support/port_platform.h>
+#include <grpc/support/sync.h>
 
 #include "src/core/lib/gprpp/arena.h"
 #include "src/core/lib/gprpp/ref_counted.h"
@@ -61,6 +62,7 @@ struct grpc_auth_context
     if (chained_ != nullptr) {
       peer_identity_property_name_ = chained_->peer_identity_property_name_;
     }
+    gpr_mu_init(&mu_);
   }
 
   ~grpc_auth_context() {
@@ -71,6 +73,7 @@ struct grpc_auth_context
       }
       gpr_free(properties_.array);
     }
+    gpr_mu_destroy(&mu_);
   }
 
   const grpc_auth_context* chained() const { return chained_.get(); }
@@ -90,10 +93,15 @@ struct grpc_auth_context
   void add_property(const char* name, const char* value, size_t value_length);
   void add_cstring_property(const char* name, const char* value);
 
+  friend const grpc_auth_property*  grpc_auth_property_iterator_next(grpc_auth_property_iterator*);
+  
  private:
   grpc_core::RefCountedPtr<grpc_auth_context> chained_;
   grpc_auth_property_array properties_;
   const char* peer_identity_property_name_ = nullptr;
+
+  // protects properties_.count
+  mutable gpr_mu mu_;
 };
 
 /* --- grpc_security_context_extension ---

@@ -179,12 +179,19 @@ const grpc_auth_property* grpc_auth_property_iterator_next(
     grpc_auth_property_iterator* it) {
   GRPC_API_TRACE("grpc_auth_property_iterator_next(it=%p)", 1, (it));
   if (it == nullptr || it->ctx == nullptr) return nullptr;
+  gpr_mu_lock(&it->ctx->mu_);
   while (it->index == it->ctx->properties().count) {
-    if (it->ctx->chained() == nullptr) return nullptr;
+    if (it->ctx->chained() == nullptr) {
+            gpr_mu_unlock(&it->ctx->mu_);
+            return nullptr;
+    }
+    gpr_mu_unlock(&it->ctx->mu_);
+    gpr_mu_lock(&it->ctx->chained()->mu_);
     it->ctx = it->ctx->chained();
     it->index = 0;
   }
   if (it->name == nullptr) {
+    gpr_mu_unlock(&it->ctx->mu_);
     return &it->ctx->properties().array[it->index++];
   } else {
     while (it->index < it->ctx->properties().count) {
@@ -192,10 +199,12 @@ const grpc_auth_property* grpc_auth_property_iterator_next(
           &it->ctx->properties().array[it->index++];
       GPR_ASSERT(prop->name != nullptr);
       if (strcmp(it->name, prop->name) == 0) {
+        gpr_mu_unlock(&it->ctx->mu_);
         return prop;
       }
     }
     /* We could not find the name, try another round. */
+    gpr_mu_unlock(&it->ctx->mu_);
     return grpc_auth_property_iterator_next(it);
   }
 }
@@ -230,6 +239,7 @@ void grpc_auth_context::ensure_capacity() {
 
 void grpc_auth_context::add_property(const char* name, const char* value,
                                      size_t value_length) {
+  gpr_mu_lock(&mu_);
   ensure_capacity();
   grpc_auth_property* prop = &properties_.array[properties_.count++];
   prop->name = gpr_strdup(name);
@@ -237,6 +247,7 @@ void grpc_auth_context::add_property(const char* name, const char* value,
   memcpy(prop->value, value, value_length);
   prop->value[value_length] = '\0';
   prop->value_length = value_length;
+  gpr_mu_unlock(&mu_);
 }
 
 void grpc_auth_context_add_property(grpc_auth_context* ctx, const char* name,
@@ -252,11 +263,13 @@ void grpc_auth_context_add_property(grpc_auth_context* ctx, const char* name,
 
 void grpc_auth_context::add_cstring_property(const char* name,
                                              const char* value) {
+  gpr_mu_lock(&mu_);
   ensure_capacity();
   grpc_auth_property* prop = &properties_.array[properties_.count++];
   prop->name = gpr_strdup(name);
   prop->value = gpr_strdup(value);
   prop->value_length = strlen(value);
+  gpr_mu_unlock(&mu_);
 }
 
 void grpc_auth_context_add_cstring_property(grpc_auth_context* ctx,
